@@ -7,6 +7,7 @@ import {
   NoAvailableAccountError,
   isUserState,
 } from '../types.ts';
+import { type LeaseStore, InMemoryLeaseStore } from './leaseStore.ts';
 
 /**
  * Central registry: the single source of truth for all test credentials,
@@ -14,18 +15,26 @@ import {
  * parallel runs don't collide and accounts can be rotated.
  *
  * Adding/removing/swapping an account = editing accounts.yaml only.
+ *
+ * Leasing is delegated to a `LeaseStore`. The default in-memory store is right
+ * for one runner; pass a `FileLockLeaseStore` to make leasing safe across
+ * multiple runner PROCESSES (a device farm) without changing any call site.
  */
 export class AccountRegistry {
   private readonly pools = new Map<UserState, Account[]>();
-  private readonly leased = new Set<string>(); // phone numbers currently in use
+  private readonly leases: LeaseStore;
 
-  static fromFile(path: string): AccountRegistry {
-    const raw = yaml.load(readFileSync(path, 'utf8'));
-    return AccountRegistry.fromObject(raw);
+  constructor(leases: LeaseStore = new InMemoryLeaseStore()) {
+    this.leases = leases;
   }
 
-  static fromObject(raw: unknown): AccountRegistry {
-    const registry = new AccountRegistry();
+  static fromFile(path: string, leases?: LeaseStore): AccountRegistry {
+    const raw = yaml.load(readFileSync(path, 'utf8'));
+    return AccountRegistry.fromObject(raw, leases);
+  }
+
+  static fromObject(raw: unknown, leases?: LeaseStore): AccountRegistry {
+    const registry = new AccountRegistry(leases);
     const accounts = (raw as { accounts?: Record<string, unknown> })?.accounts;
     if (!accounts || typeof accounts !== 'object') {
       throw new Error('registry: missing top-level `accounts` map');
@@ -65,30 +74,25 @@ export class AccountRegistry {
   /**
    * Lease a free account for the given state. The runner resolves accounts by
    * STATE NAME at runtime; credentials never live in a test case.
-   *
-   * In-process leasing is sufficient for one runner driving N devices. For
-   * cross-process parallelism (a device farm) swap this Set for a lockfile or
-   * Redis lease — the call site does not change.
    */
   checkout(state: UserState): AccountLease {
     const pool = this.pools.get(state);
     if (!pool || pool.length === 0) {
       throw new NoAvailableAccountError(`no accounts provisioned for state ${state}`);
     }
-    const free = pool.find((a) => !this.leased.has(a.phone));
+    const free = pool.find((a) => this.leases.tryAcquire(a.phone));
     if (!free) {
       throw new NoAvailableAccountError(
         `all ${pool.length} accounts for ${state} are currently leased; add more to the pool`,
       );
     }
-    this.leased.add(free.phone);
     let released = false;
     return {
       account: free,
       release: () => {
         if (released) return;
         released = true;
-        this.leased.delete(free.phone);
+        this.leases.release(free.phone);
       },
     };
   }

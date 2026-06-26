@@ -53,6 +53,7 @@ const assertText = z.object({
 });
 const fail = z.object({ fail: z.string() });
 const useFlow = z.object({ use_flow: z.string() });
+const assertMatrix = z.object({ assert_matrix: z.object({ matrix: z.string() }) });
 
 // `branch` is recursive (its cases hold steps), so declare lazily.
 export const stepSchema: z.ZodType<unknown> = z.lazy(() =>
@@ -67,9 +68,14 @@ export const stepSchema: z.ZodType<unknown> = z.lazy(() =>
     assertText,
     fail,
     useFlow,
+    assertMatrix,
     branch,
   ]),
 );
+
+/** A named expectations matrix: state -> { visible / absent accessibility ids }. */
+const matrixRow = z.object({ visible: z.array(z.string()).optional(), absent: z.array(z.string()).optional() });
+const matricesSchema = z.record(z.string(), z.record(z.string(), matrixRow));
 
 const branch = z.object({
   branch: z.object({
@@ -92,6 +98,7 @@ export const suiteSchema = z.object({
   target: z.enum(['any', 'simulator', 'device']).default('any'),
   requires: userStateEnum,
   flows: z.record(z.string(), z.array(stepSchema)).optional(),
+  matrices: matricesSchema.optional(),
   setup: z.array(z.union([loginStep, assertStateStep])).default([]),
   steps: z.array(stepSchema),
   // teardown uses the same real, handled verbs as `steps` — log out by tapping

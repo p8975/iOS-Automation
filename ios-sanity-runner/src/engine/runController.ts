@@ -12,6 +12,7 @@ import { AppiumSession } from '../session/appiumSession.ts';
 import { LoginHandler } from '../login/loginHandler.ts';
 import { ActionRunner } from '../actions/actionRunner.ts';
 import { BackendStateDetector, assertState } from '../state/stateDetector.ts';
+import { mapWithConcurrency } from './concurrency.ts';
 import {
   type SuiteResult,
   type StepResult,
@@ -48,6 +49,35 @@ export class RunController {
     return requested;
   }
 
+  /**
+   * Run many suites with bounded concurrency. Account leasing is collision-safe
+   * via the registry's LeaseStore; to parallelize across real devices, give each
+   * run a distinct `preferredUdid` (or keep concurrency at 1 for a single
+   * device). A thrown run becomes a failed SuiteResult — one bad suite never
+   * aborts the batch.
+   */
+  async runSuites(
+    items: ReadonlyArray<{ suite: SuiteDefinition; opts?: RunOptions }>,
+    concurrency = 1,
+  ): Promise<SuiteResult[]> {
+    const settled = await mapWithConcurrency(items, concurrency, (it) => this.runSuite(it.suite, it.opts));
+    return settled.map((r, i) => {
+      if (r.status === 'fulfilled') return r.value;
+      const item = items[i]!;
+      const now = new Date().toISOString();
+      return {
+        suite: item.suite.suite,
+        target: this.resolveTarget(item.suite, item.opts ?? {}),
+        state: item.suite.requires,
+        ok: false,
+        steps: [],
+        startedAt: now,
+        finishedAt: now,
+        error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+      };
+    });
+  }
+
   async runSuite(suite: SuiteDefinition, opts: RunOptions = {}): Promise<SuiteResult> {
     const startedAt = new Date().toISOString();
     const target = this.resolveTarget(suite, opts);
@@ -76,6 +106,7 @@ export class RunController {
       const runner = new ActionRunner(driver, {
         detectedState,
         flows: (suite.flows ?? {}) as Record<string, unknown[]>,
+        matrices: (suite.matrices ?? {}) as Record<string, Record<string, { visible?: string[]; absent?: string[] }>>,
         defaultTimeoutMs: 15_000,
       });
       steps.push(...(await runner.runSteps(suite.steps as unknown[])));
