@@ -94,7 +94,10 @@ export const suiteSchema = z.object({
   flows: z.record(z.string(), z.array(stepSchema)).optional(),
   setup: z.array(z.union([loginStep, assertStateStep])).default([]),
   steps: z.array(stepSchema),
-  teardown: z.array(z.union([z.object({ logout: z.null().optional() }), stepSchema])).default([]),
+  // teardown uses the same real, handled verbs as `steps` — log out by tapping
+  // the logout control or via `use_flow`, so typos fail validation instead of
+  // matching a permissive placeholder.
+  teardown: z.array(stepSchema).default([]),
 });
 
 export type SuiteDefinition = z.infer<typeof suiteSchema>;
