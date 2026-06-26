@@ -2,13 +2,16 @@ import type { Driver } from '../session/appiumSession.ts';
 import type { LocatorSpec } from '../suite/schema.ts';
 import type { UserState } from '../types.ts';
 import { resolveLocator, describeLocator } from '../locators/locatorEngine.ts';
+import { expandMatrix, type ExpectationMatrix } from '../suite/matrix.ts';
 import { RunnerError, type StepResult } from '../types.ts';
 
 export interface ActionContext {
-  /** State detected at runtime — drives `branch`. */
+  /** State detected at runtime — drives `branch` and `assert_matrix`. */
   detectedState: UserState;
   /** Reusable named flows referenced by `use_flow`. */
   flows: Record<string, unknown[]>;
+  /** Named expectation matrices referenced by `assert_matrix`. */
+  matrices: Record<string, ExpectationMatrix>;
   /** Default element wait, ms. */
   defaultTimeoutMs: number;
 }
@@ -77,6 +80,8 @@ export class ActionRunner {
         throw new RunnerError(String(step.fail));
       case 'use_flow':
         return this.useFlow(String(step.use_flow));
+      case 'assert_matrix':
+        return this.assertMatrix((step.assert_matrix as { matrix: string }).matrix);
       case 'branch':
         return this.branch(step.branch as { cases: Record<string, unknown[]> });
       default:
@@ -151,6 +156,15 @@ export class ActionRunner {
     const results = await this.runSteps(flow);
     const failed = results.find((r) => !r.ok);
     if (failed) throw new RunnerError(`flow "${name}" failed at ${failed.action}: ${failed.error}`);
+  }
+
+  private async assertMatrix(name: string): Promise<void> {
+    const matrix = this.ctx.matrices[name];
+    if (!matrix) throw new RunnerError(`assert_matrix: unknown matrix "${name}"`);
+    const steps = expandMatrix(matrix, this.ctx.detectedState);
+    const results = await this.runSteps(steps);
+    const failed = results.find((r) => !r.ok);
+    if (failed) throw new RunnerError(`matrix "${name}"[${this.ctx.detectedState}] failed: ${failed.error}`);
   }
 
   private async branch(spec: { cases: Record<string, unknown[]> }): Promise<void> {
