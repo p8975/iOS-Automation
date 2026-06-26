@@ -9,6 +9,7 @@ import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { loadRunnerConfig } from './config/config.ts';
 import { AccountRegistry } from './registry/accountRegistry.ts';
+import { FileLockLeaseStore } from './registry/leaseStore.ts';
 import { loadSuiteFile, loadSuiteDir } from './suite/loader.ts';
 import { RunController } from './engine/runController.ts';
 import { Reporter } from './reporter/reporter.ts';
@@ -19,6 +20,8 @@ interface Args {
   all?: boolean;
   target?: Target;
   udid?: string;
+  parallel: number;
+  lockDir?: string;
   config: string;
   accounts: string;
   suitesDir: string;
@@ -26,6 +29,7 @@ interface Args {
 
 function parseArgs(argv: string[]): Args {
   const a: Args = {
+    parallel: 1,
     config: 'config/runner.config.yaml',
     accounts: 'config/accounts.yaml',
     suitesDir: 'suites',
@@ -37,6 +41,8 @@ function parseArgs(argv: string[]): Args {
       case '--all': a.all = true; break;
       case '--target': a.target = v as Target; i++; break;
       case '--udid': a.udid = v; i++; break;
+      case '--parallel': a.parallel = Math.max(1, Number(v) || 1); i++; break;
+      case '--lock-dir': a.lockDir = v; i++; break;
       case '--config': a.config = v!; i++; break;
       case '--accounts': a.accounts = v!; i++; break;
       case '--suites': a.suitesDir = v!; i++; break;
@@ -55,7 +61,10 @@ async function main(): Promise<void> {
   }
 
   const config = loadRunnerConfig(resolve(args.config));
-  const registry = AccountRegistry.fromFile(resolve(args.accounts));
+  // A lock dir makes account leasing collision-safe across runner processes
+  // (parallel CI shards / a device farm). Default in-memory is fine otherwise.
+  const leases = args.lockDir ? new FileLockLeaseStore(resolve(args.lockDir)) : undefined;
+  const registry = AccountRegistry.fromFile(resolve(args.accounts), leases);
   const controller = new RunController(config, registry);
 
   const suites = args.all
@@ -73,16 +82,30 @@ async function main(): Promise<void> {
     console.warn('⚠ no stateBackend.statusUrl configured — DRIFT CHECK is skipped (using declared state).');
   }
 
-  const results: SuiteResult[] = [];
-  for (const suite of suites) {
-    if (!isUserState(suite.requires)) {
-      console.error(`✖ suite "${suite.suite}" requires unknown state ${suite.requires}`);
-      continue;
+  const runnable = suites.filter((s) => {
+    if (isUserState(s.requires)) return true;
+    console.error(`✖ suite "${s.suite}" requires unknown state ${s.requires} — skipped`);
+    return false;
+  });
+
+  const items = runnable.map((suite) => ({
+    suite,
+    opts: { target: args.target, preferredUdid: args.udid },
+  }));
+
+  let results: SuiteResult[];
+  if (args.parallel > 1) {
+    console.log(`▶ running ${items.length} suite(s) with concurrency ${args.parallel}…`);
+    results = await controller.runSuites(items, args.parallel);
+    for (const r of results) console.log(`  ${r.ok ? '✅ PASS' : '❌ FAIL'} ${r.suite}${r.ok ? '' : ` — ${r.error ?? 'see steps'}`}`);
+  } else {
+    results = [];
+    for (const item of items) {
+      process.stdout.write(`▶ ${item.suite.suite} (requires ${item.suite.requires}) … `);
+      const result = await controller.runSuite(item.suite, item.opts);
+      results.push(result);
+      console.log(result.ok ? '✅ PASS' : `❌ FAIL — ${result.error ?? 'see steps'}`);
     }
-    process.stdout.write(`▶ ${suite.suite} (requires ${suite.requires}) … `);
-    const result = await controller.runSuite(suite, { target: args.target, preferredUdid: args.udid });
-    results.push(result);
-    console.log(result.ok ? '✅ PASS' : `❌ FAIL — ${result.error ?? 'see steps'}`);
   }
 
   const { junitPath, htmlPath } = new Reporter(config.artifactsDir).write(results);
