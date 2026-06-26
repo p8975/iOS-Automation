@@ -75,7 +75,13 @@ appium
 npm run doctor                                    # preflight
 node src/cli.ts --suite suites/home_entitlement_sanity.yaml --target device
 node src/cli.ts --all --target simulator          # run every suite
+node src/cli.ts --all --parallel 3 --lock-dir .leases   # parallel + cross-process safe leasing
 ```
+
+**CLI flags:** `--suite <file>` / `--all`, `--target simulator|device|any`,
+`--udid <id>`, `--parallel <n>` (bounded concurrent suites), `--lock-dir <dir>`
+(file-lock account leasing across processes — for parallel shards / a farm),
+`--config`, `--accounts`, `--suites`.
 
 Artifacts land in `artifacts/`: `junit.xml` (CI), `report.html` (humans), plus
 `page-source.xml` + `screenshot.png` per failed suite.
@@ -126,6 +132,10 @@ See `suites/home_entitlement_sanity.yaml` for a worked, branching example.
   `assert_not_visible`, `assert_text`, `fail`.
 - **Control flow:** `branch: { on: detected_user_state, cases: {...} }`,
   `use_flow: <name>` (reusable flows under `flows:`).
+- **State matrix:** define `matrices: { <name>: { <STATE>: { visible: [...],
+  absent: [...] } } }` and assert with `assert_matrix: { matrix: <name> }`. The
+  engine expands the row for the detected state — adding a new state is one row,
+  not a new branch. See `suites/home_entitlement_matrix.yaml`.
 - **Setup verbs:** `login: { otp: auto }`, `assert_state: <STATE>` (drift check).
 
 ---
@@ -156,13 +166,16 @@ Module map: `src/engine` (orchestration), `src/devices`, `src/build`,
 - **Phase 0 — Foundations (done):** engine, YAML loader+schema, action runner,
   registry, bypass OTP, reporting, doctor, device discovery. Verified via tests.
 - **Phase 1 — State-awareness (done):** pool leasing, pluggable OTP, drift
-  check, branching DSL, full example suite. *Pending: a live Xcode env to
-  execute against the device.*
-- **Phase 2 — Real device:** WDA signing, `.ipa` install, `--target device`.
-- **Phase 3 — Device farm + parallelism:** device pool, cross-process account
-  leasing (lockfile/Redis), farm provider abstraction.
-- **Phase 4 — CI:** macOS runner, TestFlight provider, scheduled gate,
-  swap OTP to Twilio/backend if test numbers receive real SMS.
+  check, branching DSL + state matrix, full example suites.
+- **Phase 2 — Real device (pending Xcode):** WDA signing, `.ipa` install,
+  `--target device`. *Blocked only on a live Xcode env to execute against a
+  device — code paths are in place.*
+- **Phase 3 — Parallelism + farm (foundations done):** `--parallel` bounded
+  concurrency, `DevicePool`, cross-process file-lock leasing (`--lock-dir`).
+  Remaining: a remote farm `DeviceManager` (BrowserStack/Sauce/AWS/self-hosted).
+- **Phase 4 — CI (started):** CI runs typecheck+tests+build on every PR. Remaining:
+  macOS runner with a device/sim, TestFlight provider, scheduled gate, swap OTP
+  to Twilio/backend if test numbers receive real SMS.
 
 ---
 

@@ -1,0 +1,27 @@
+suite: home_entitlement_matrix
+description: >
+  Same intent as home_entitlement_sanity, but expectations live in a DATA matrix
+  instead of hand-written branches. Adding a new user state = adding one row.
+target: any
+requires: SUBSCRIBED_USER
+
+# state -> what must be visible / absent on the home screen.
+matrices:
+  home:
+    SUBSCRIBED_USER:           { visible: [badge_premium],            absent: [cta_start_trial] }
+    IN_TRIAL_USER:             { visible: [banner_trial_days_left, cta_subscribe] }
+    TRIAL_ELIGIBLE_USER:       { visible: [cta_start_trial],          absent: [badge_premium] }
+    TRIAL_CHURNED_USER:        { visible: [cta_resubscribe] }
+    SUBSCRIPTION_CHURNED_USER: { visible: [cta_resubscribe] }
+    PAUSED_USER:               { visible: [banner_resume_subscription] }
+
+setup:
+  - login: { otp: auto }
+  - assert_state: SUBSCRIBED_USER     # drift check
+
+steps:
+  - wait_for: { accessibility_id: home_screen_root, timeout: 20 }
+  - assert_matrix: { matrix: home }   # expands to asserts for the detected state
+
+teardown:
+  - tap: { accessibility_id: account_logout_button }
