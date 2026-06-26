@@ -1,0 +1,31 @@
+# Account registry TEMPLATE. Copy to config/accounts.yaml (gitignored) and fill
+# in real test numbers. accounts.yaml is the SINGLE source of truth for test
+# credentials — add/remove/swap an account = edit this one file, nothing else.
+#
+# Multiple accounts per state = a pool, so parallel runs don't collide on the
+# same login and you can rotate numbers. The runner resolves an account by
+# STATE NAME at runtime; a test case only declares `requires: <STATE>`.
+
+accounts:
+  TRIAL_ELIGIBLE_USER:
+    - { phone: "+910000000020", notes: "never started a trial" }
+
+  IN_TRIAL_USER:
+    - { phone: "+910000000010", notes: "primary in-trial" }
+    - { phone: "+910000000011" }
+
+  SUBSCRIBED_USER:
+    - { phone: "+910000000001", notes: "primary subscribed" }
+    - { phone: "+910000000002" }
+
+  TRIAL_CHURNED_USER:
+    - { phone: "+910000000030", notes: "trial ended, never converted" }
+
+  SUBSCRIPTION_CHURNED_USER:
+    - { phone: "+910000000040", notes: "was paid, lapsed" }
+
+  PAUSED_USER:
+    - { phone: "+910000000050", notes: "subscription paused" }
+
+# Optional per-account OTP bypass override:
+#   - { phone: "+910000000099", bypass_code: "424242" }

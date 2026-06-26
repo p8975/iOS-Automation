@@ -1,0 +1,19 @@
+# Secrets — the real account registry never gets committed
+config/accounts.yaml
+config/runner.config.yaml
+.env
+.env.*
+
+# Dependencies / build
+node_modules/
+dist/
+
+# Run artifacts
+artifacts/
+reports/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

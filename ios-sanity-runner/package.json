@@ -1,0 +1,32 @@
+{
+  "name": "ios-sanity-runner",
+  "version": "0.1.0",
+  "description": "State-aware end-to-end UI sanity-test runner for iOS apps (Simulator + physical device). Designed as a drop-in module.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "ios-sanity": "./src/cli.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "node --test tests/*.test.ts",
+    "doctor": "node scripts/doctor.ts",
+    "run": "node src/cli.ts"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "webdriverio": "^9.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

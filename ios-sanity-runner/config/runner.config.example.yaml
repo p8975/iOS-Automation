@@ -1,0 +1,44 @@
+# Runner configuration TEMPLATE. Copy to config/runner.config.yaml (gitignored).
+
+# Bundle id of the app under test (find via: ideviceinstaller -l).
+bundleId: "in.stage.app"
+
+# Where runs go by default when a suite says target: any.
+defaultTarget: device          # simulator | device | any
+
+appium:
+  hostname: "127.0.0.1"
+  port: 4723
+  path: "/"
+
+# --- OTP login strategy (pluggable; swapping these is a CONFIG change only) ---
+otp:
+  default_strategy: bypass      # bypass | twilio | backend_endpoint
+  bypass_code: "000000"         # used when strategy = bypass
+  # twilio:
+  #   accountSid: "ACxxxx"
+  #   authToken: "xxxx"
+  # backend_endpoint:
+  #   url: "https://qa.internal/test/otp"
+  #   apiKey: "xxxx"
+
+# --- WDA signing for REAL devices (ignored by the Simulator) ---
+# wda:
+#   updatedWDABundleId: "in.stage.WebDriverAgentRunner"
+#   xcodeOrgId: "ABCDE12345"
+#   xcodeSigningId: "Apple Development"
+
+# --- Drift check source of truth (omit to skip drift checking) ---
+# stateBackend:
+#   statusUrl: "https://qa.internal/test/user-status"
+#   apiKey: "xxxx"
+
+# --- App-specific login screen locators (prefer accessibility ids) ---
+login:
+  phoneField:     { accessibility_id: "login_phone_field" }
+  continueButton: { accessibility_id: "login_continue_button" }
+  otpField:       { accessibility_id: "login_otp_field" }
+  submitButton:   { accessibility_id: "login_submit_button" }
+  successMarker:  { accessibility_id: "home_screen_root" }
+
+artifactsDir: "artifacts"

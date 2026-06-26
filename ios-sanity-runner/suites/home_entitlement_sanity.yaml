@@ -1,0 +1,40 @@
+suite: home_entitlement_sanity
+description: Home screen reflects the user's real entitlement state
+target: any                       # any | simulator | device
+requires: SUBSCRIBED_USER         # engine leases a SUBSCRIBED account from the registry
+
+# Reusable flows referenced by `use_flow` (keeps cases DRY as states grow).
+flows:
+  open_account_tab:
+    - tap: { accessibility_id: tab_account }
+    - wait_for: { accessibility_id: account_screen_root, timeout: 10 }
+
+setup:
+  - login: { otp: auto }          # OtpProvider supplies the code (bypass by default)
+  - assert_state: SUBSCRIBED_USER # DRIFT CHECK: fail loudly if not actually subscribed
+
+steps:
+  - wait_for: { accessibility_id: home_screen_root, timeout: 20 }
+
+  # State-aware branch: behavior differs by the state DETECTED at runtime.
+  - branch:
+      on: detected_user_state
+      cases:
+        SUBSCRIBED_USER:
+          - assert_visible:     { accessibility_id: badge_premium }
+          - assert_not_visible: { accessibility_id: cta_start_trial }
+        IN_TRIAL_USER:
+          - assert_visible: { accessibility_id: banner_trial_days_left }
+          - assert_visible: { accessibility_id: cta_subscribe }
+        TRIAL_ELIGIBLE_USER:
+          - assert_visible: { accessibility_id: cta_start_trial }
+        PAUSED_USER:
+          - assert_visible: { accessibility_id: banner_resume_subscription }
+        default:
+          - fail: "Unexpected user state on home screen"
+
+  - use_flow: open_account_tab
+  - assert_text: { accessibility_id: account_plan_label, contains: "Premium" }
+
+teardown:
+  - tap: { accessibility_id: account_logout_button }
