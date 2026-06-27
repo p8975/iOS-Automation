@@ -27,7 +27,10 @@ async function main(): Promise<void> {
   // Full Xcode vs Command Line Tools — the critical gate for XCUITest/WDA.
   const xsel = await run('xcode-select', ['-p']);
   const path = xsel.stdout.trim();
-  const hasFullXcode = path.includes('Xcode.app');
+  // Full Xcode lives inside an .app bundle (any name, e.g. Xcode.app or
+  // Xcode-26.6.0.app from `xcodes`); Command Line Tools live under
+  // /Library/Developer/CommandLineTools.
+  const hasFullXcode = /\.app\/Contents\/Developer\/?$/.test(path) && !path.includes('CommandLineTools');
   add(
     'Full Xcode (required to drive UI)',
     hasFullXcode ? 'ok' : 'fail',
