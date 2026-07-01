@@ -124,24 +124,32 @@ export class AppiumProbe implements UiProbe {
     }
 
     // 2) Flutter dialect/culture popup — only if its title is on screen.
-    let src: string;
-    try {
-      src = await this.#driver.getPageSource();
-    } catch {
-      return;
-    }
-    if (!/अपनी बोली चुनें|बोली चुनें|Choose your dialect/.test(src)) return;
-    for (const name of ['Dismiss', 'आगे बढे', 'आगे बढ़ें']) {
+    // Try a few times: tap a close control, re-check the source, repeat until the
+    // popup is gone. "आगे बढे" (continue, confirms the already-selected culture)
+    // reliably closes it; the "Dismiss" X often does NOT, so it is the LAST resort.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let src: string;
       try {
-        const b = await this.#driver.$("-ios predicate string:name == '" + name + "'");
-        if (await b.isExisting()) {
-          await b.click();
-          await this.#driver.pause(1200);
-          return;
-        }
+        src = await this.#driver.getPageSource();
       } catch {
-        /* try the next control */
+        return;
       }
+      if (!/अपनी बोली चुनें|बोली चुनें|Choose your dialect/.test(src)) return; // gone
+      let tapped = false;
+      for (const name of ['आगे बढे', 'आगे बढ़ें', 'जारी रखें', 'Continue', 'Dismiss']) {
+        try {
+          const b = await this.#driver.$("-ios predicate string:name == '" + name + "'");
+          if (await b.isExisting()) {
+            await b.click();
+            await this.#driver.pause(1200);
+            tapped = true;
+            break;
+          }
+        } catch {
+          /* try the next control */
+        }
+      }
+      if (!tapped) return; // no known close control on screen — nothing more to do
     }
   }
 

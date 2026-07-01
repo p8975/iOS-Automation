@@ -99,7 +99,10 @@ export class Explorer {
 
     const ec = this.#config.explore ?? {};
     const opts: CrawlOptions = {
-      deny: ec.deny ?? DEFAULT_DENY,
+      // Project deny terms EXTEND the built-in safe defaults (they don't replace
+      // them) — so a config `explore.deny` can never silently drop the financial
+      // /account-state protections.
+      deny: [...DEFAULT_DENY, ...(ec.deny ?? [])],
       maxSteps: ec.maxSteps ?? 60,
       maxDepth: ec.maxDepth ?? 3,
       maxScreens: ec.maxScreens ?? 40,
