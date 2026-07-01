@@ -32,11 +32,21 @@ export class ActionRunner {
     this.ctx = ctx;
   }
 
-  async runSteps(steps: unknown[]): Promise<StepResult[]> {
+  /**
+   * @param onStep optional observer fired as each step settles. Only the
+   *   top-level call (from the controller) passes it; the recursive calls for
+   *   `use_flow`/`branch`/`assert_matrix` omit it, so live progress reports one
+   *   event per authored step rather than per nested sub-step.
+   */
+  async runSteps(
+    steps: unknown[],
+    onStep?: (result: StepResult, index: number) => void,
+  ): Promise<StepResult[]> {
     const results: StepResult[] = [];
     for (const step of steps) {
       const result = await this.runStep(step as Step);
       results.push(result);
+      onStep?.(result, results.length - 1);
       if (!result.ok) break; // fail fast within a flow
     }
     return results;

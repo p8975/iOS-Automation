@@ -35,6 +35,12 @@ export class AppiumSession {
       'appium:automationName': 'XCUITest',
       'appium:bundleId': this.config.bundleId,
       'appium:noReset': true,
+      // WDA continuously auto-accepts native permission alerts (ATT / location /
+      // notifications / …) the instant they appear — including the ones STAGE
+      // fires ASYNCHRONOUSLY a beat after login/home, which a polled dismiss
+      // always races. dismissInterstitials() stays as a backstop + for the
+      // in-app (Flutter) dialect popup, which is not a system alert.
+      'appium:autoAcceptAlerts': true,
       ...this.manager.capabilities(this.device),
     };
     // Real-device WDA signing — ignored by the Simulator.

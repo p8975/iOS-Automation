@@ -43,6 +43,22 @@ export interface AccountLease {
   release: () => void;
 }
 
+/**
+ * A behavioural QA finding raised by the AI judge for a screen — the heart of
+ * exploratory QA: each screen/element is validated against expected behaviour
+ * and anything off is flagged here (e.g. a culture popup shown to a returning
+ * user). Populated post-crawl by the agent judge; empty during the raw crawl.
+ */
+export interface Finding {
+  severity: 'bug' | 'warning' | 'info';
+  /** The element or area this is about, e.g. "Login button", "culture popup". */
+  area: string;
+  /** What correct behaviour would be. */
+  expected: string;
+  /** What was actually observed. */
+  actual: string;
+}
+
 /** Result of running one step. */
 export interface StepResult {
   ok: boolean;
@@ -51,6 +67,10 @@ export interface StepResult {
   error?: string;
   screenshotPath?: string;
   durationMs: number;
+  /** For a `screen:` step — the interactive controls enumerated on it (judge evidence). */
+  elements?: string[];
+  /** For a `screen:` step — behavioural findings raised by the AI judge. */
+  findings?: Finding[];
 }
 
 /** Result of running one suite against one target. */

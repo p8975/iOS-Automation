@@ -17,9 +17,50 @@ export {
 } from './registry/leaseStore.ts';
 export { expandMatrix, type ExpectationMatrix, type MatrixRow } from './suite/matrix.ts';
 export { loadRunnerConfig, type RunnerConfig, type LoginLocators } from './config/config.ts';
+export { autoLogin, type AutoLoginConfig, type AutoLoginResult } from './login/appLogin.ts';
 export { loadSuiteFile, loadSuiteDir } from './suite/loader.ts';
 export { suiteSchema, type SuiteDefinition, type LocatorSpec } from './suite/schema.ts';
 export { Reporter } from './reporter/reporter.ts';
+
+// Live run events + the optional dashboard (additive; the engine works without them).
+export {
+  EventHub,
+  newRunId,
+  runStartedEvent,
+  runFinishedEvent,
+  type RunEvent,
+  type RunObserver,
+  type SuiteRef,
+} from './events/runEvents.ts';
+export {
+  RunStore,
+  type StoredRun,
+  type StoredSuite,
+  type RunStatus,
+  type SuiteStatus,
+} from './dashboard/runStore.ts';
+export {
+  startDashboard,
+  type DashboardHandle,
+  type DashboardOptions,
+  type DashboardCapabilities,
+  type TriggerRequest,
+  type TriggerResult,
+} from './dashboard/server.ts';
+export { ingestRun, emitRunEvent, LiveRun, type PushResult } from './dashboard/liveClient.ts';
+
+// Autonomous exploratory crawl (read-only safe by default).
+export { Explorer, type ExploreParams } from './explore/explorer.ts';
+export {
+  crawl,
+  type UiProbe,
+  type UiElement,
+  type ScreenHealth,
+  type CrawlOptions,
+  type CrawlOutcome,
+} from './explore/crawler.ts';
+export { AppiumProbe, parseInteractive, type ParsedControl } from './explore/appiumProbe.ts';
+export { DEFAULT_DENY, isDestructive } from './explore/denylist.ts';
 
 export { createOtpProvider } from './otp/index.ts';
 export type { OtpProvider, OtpConfig, OtpStrategy } from './otp/otpProvider.ts';

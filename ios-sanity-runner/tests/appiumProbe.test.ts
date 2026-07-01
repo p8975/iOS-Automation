@@ -1,0 +1,142 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseInteractive, assessScreen, screenSignature } from '../src/explore/appiumProbe.ts';
+
+const XML = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  '<AppiumAUT>',
+  '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="STAGE">',
+  '  <XCUIElementTypeButton type="XCUIElementTypeButton" name="Search" label="Search" enabled="true" visible="true" x="0" y="0"/>',
+  '  <XCUIElementTypeButton type="XCUIElementTypeButton" name="Subscribe Now" enabled="true" visible="true"/>',
+  '  <XCUIElementTypeButton type="XCUIElementTypeButton" name="Hidden" enabled="true" visible="false"/>',
+  '  <XCUIElementTypeButton type="XCUIElementTypeButton" enabled="true" visible="true"/>',
+  '  <XCUIElementTypeCell type="XCUIElementTypeCell" label="Naate" enabled="true" visible="true"/>',
+  '  <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="Just text" visible="true"/>',
+  "  <XCUIElementTypeButton type=\"XCUIElementTypeButton\" name=\"Neeraj's\" enabled=\"true\" visible=\"true\"/>",
+  '  <XCUIElementTypeButton type="XCUIElementTypeButton" name="Search" label="Search" visible="true"/>',
+  '  <XCUIElementTypeImage type="XCUIElementTypeImage" name="Watch on TV" visible="true"/>',
+  '  <XCUIElementTypeOther type="XCUIElementTypeOther" name="Episode 1" accessible="true" visible="true"/>',
+  '  <XCUIElementTypeOther type="XCUIElementTypeOther" name="layout-box" visible="true"/>',
+  '  <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="Quote &quot;Hi&quot;" accessible="true" visible="true"/>',
+  '</AppiumAUT>',
+].join('\n');
+
+test('parses classic interactive controls and named images', () => {
+  const labels = parseInteractive(XML).map((c) => c.label);
+  assert.ok(labels.includes('Search'));
+  assert.ok(labels.includes('Naate'));
+  assert.ok(labels.includes('Subscribe Now')); // parse lists it; the CRAWLER denylists it
+  assert.ok(labels.includes('Watch on TV')); // Image type is interactive (Flutter renders tappables as Image/Other)
+});
+
+test('includes Flutter accessible="true" nodes regardless of type, excludes plain layout', () => {
+  const labels = parseInteractive(XML).map((c) => c.label);
+  assert.ok(labels.includes('Episode 1')); // Other + accessible=true
+  assert.equal(labels.includes('layout-box'), false); // Other, no accessible marker
+});
+
+test('drops hidden, unidentifiable, non-interactive, and duplicate controls', () => {
+  const labels = parseInteractive(XML).map((c) => c.label);
+  assert.equal(labels.includes('Hidden'), false); // visible=false
+  assert.equal(labels.includes('Just text'), false); // StaticText, not interactive, not accessible
+  assert.equal(labels.filter((l) => l === 'Search').length, 1); // de-duplicated
+});
+
+test('builds a type+name predicate selector; uses label when name is absent', () => {
+  const byLabel = new Map(parseInteractive(XML).map((c) => [c.label, c.selector]));
+  assert.equal(byLabel.get('Search'), "-ios predicate string:type == 'XCUIElementTypeButton' AND name == 'Search'");
+  assert.equal(byLabel.get('Naate'), "-ios predicate string:type == 'XCUIElementTypeCell' AND label == 'Naate'");
+});
+
+test('decodes XML entities in the label and selector', () => {
+  const c = parseInteractive(XML).find((x) => x.label.startsWith('Quote'));
+  assert.equal(c?.label, 'Quote "Hi"');
+  assert.ok(c?.selector.includes("name == 'Quote \"Hi\"'"));
+});
+
+test('escapes single quotes in the predicate value', () => {
+  const sel = parseInteractive(XML).find((c) => c.label === "Neeraj's")?.selector ?? '';
+  assert.ok(sel.includes("name == 'Neeraj\\'s'"));
+});
+
+test('honors the max cap', () => {
+  assert.equal(parseInteractive(XML, undefined, 2).length, 2);
+});
+
+test('screenSignature: same screen with transient attrs / reordering hashes identically', () => {
+  // Same two controls, but reordered and with different focus/selection/coords/
+  // index — the noise that made re-visits of one screen count as distinct before.
+  const a = '<XCUIElementTypeButton name="Search" x="0" y="0" focused="false" index="0"/>' + '<XCUIElementTypeCell label="Naate" selected="false" index="1"/>';
+  const b = '<XCUIElementTypeCell label="Naate" selected="true" index="9" x="5" y="90"/>' + '<XCUIElementTypeButton name="Search" focused="true" index="3"/>';
+  assert.equal(screenSignature(a), screenSignature(b));
+});
+
+test('screenSignature: different content (names) hashes differently', () => {
+  const movies = '<XCUIElementTypeButton name="Search"/><XCUIElementTypeCell name="Khejadi"/>';
+  const shows = '<XCUIElementTypeButton name="Search"/><XCUIElementTypeCell name="Naate"/>';
+  assert.notEqual(screenSignature(movies), screenSignature(shows));
+});
+
+test('screenSignature: unnamed wrapper nodes do not affect the signature', () => {
+  const bare = '<XCUIElementTypeButton name="Search"/>';
+  const wrapped = '<XCUIElementTypeOther/><XCUIElementTypeButton name="Search"/><XCUIElementTypeGroup/>';
+  assert.equal(screenSignature(bare), screenSignature(wrapped));
+});
+
+test('trims the label but matches the predicate on the UNTRIMMED name (leading/trailing spaces)', () => {
+  // STAGE search-result rows carry a leading space in their name; the old code
+  // trimmed it into the selector too, so the exact `==` never resolved the control
+  // and every tap timed out. The label is trimmed for display; the selector is not.
+  const xml = '<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name=" माइक्रो ड्रामाज़ " accessible="true" visible="true"/>';
+  const c = parseInteractive(xml)[0];
+  assert.equal(c?.label, 'माइक्रो ड्रामाज़'); // trimmed for display
+  assert.equal(c?.selector, "-ios predicate string:type == 'XCUIElementTypeStaticText' AND name == ' माइक्रो ड्रामाज़ '"); // exact, untrimmed
+});
+
+// A rich content screen: many elements, plenty labelled.
+const HEALTHY = [
+  '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="STAGE">',
+  '  <XCUIElementTypeButton name="Search" label="Search"/>',
+  '  <XCUIElementTypeImage name="फिल्में"/>',
+  '  <XCUIElementTypeImage name="शोज़"/>',
+  '  <XCUIElementTypeStaticText label="अपने पसंदीदा किरदार से बात करें"/>',
+  '</XCUIElementTypeApplication>',
+].join('\n');
+
+test('assessScreen: a rich content screen is healthy', () => {
+  assert.deepEqual(assessScreen(HEALTHY), { ok: true });
+});
+
+test('assessScreen: flags an English error state', () => {
+  const src = HEALTHY.replace('Search', 'Something went wrong');
+  const h = assessScreen(src);
+  assert.equal(h.ok, false);
+  assert.match(h.problem ?? '', /error state/);
+});
+
+test('assessScreen: flags a Hindi error state (English-only markers would miss it)', () => {
+  const src = HEALTHY + '\n<XCUIElementTypeStaticText label="कुछ गलत हो गया"/>';
+  const h = assessScreen(src);
+  assert.equal(h.ok, false);
+  assert.match(h.problem ?? '', /कुछ गलत हो गया/);
+});
+
+test('assessScreen: flags a blank screen (too few elements)', () => {
+  const h = assessScreen('<XCUIElementTypeApplication name="STAGE"/>');
+  assert.equal(h.ok, false);
+  assert.match(h.problem ?? '', /blank/);
+});
+
+test('assessScreen: flags a rendered-but-empty screen (nodes present, nothing labelled)', () => {
+  // A stuck Flutter tree keeps many wrapper nodes but no labelled content — the
+  // false-pass the raw element-count check alone would wave through.
+  const empty = Array.from({ length: 8 }, () => '<XCUIElementTypeOther/>').join('\n');
+  const h = assessScreen(empty);
+  assert.equal(h.ok, false);
+  assert.match(h.problem ?? '', /no meaningful content/);
+});
+
+test('assessScreen: an immersive (landscape) screen skips the content check', () => {
+  const empty = Array.from({ length: 8 }, () => '<XCUIElementTypeOther/>').join('\n');
+  assert.deepEqual(assessScreen(empty, true), { ok: true });
+});
