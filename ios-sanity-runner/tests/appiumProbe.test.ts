@@ -63,6 +63,16 @@ test('honors the max cap', () => {
   assert.equal(parseInteractive(XML, undefined, 2).length, 2);
 });
 
+test('trims the label but matches the predicate on the UNTRIMMED name (leading/trailing spaces)', () => {
+  // STAGE search-result rows carry a leading space in their name; the old code
+  // trimmed it into the selector too, so the exact `==` never resolved the control
+  // and every tap timed out. The label is trimmed for display; the selector is not.
+  const xml = '<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name=" माइक्रो ड्रामाज़ " accessible="true" visible="true"/>';
+  const c = parseInteractive(xml)[0];
+  assert.equal(c?.label, 'माइक्रो ड्रामाज़'); // trimmed for display
+  assert.equal(c?.selector, "-ios predicate string:type == 'XCUIElementTypeStaticText' AND name == ' माइक्रो ड्रामाज़ '"); // exact, untrimmed
+});
+
 // A rich content screen: many elements, plenty labelled.
 const HEALTHY = [
   '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="STAGE">',

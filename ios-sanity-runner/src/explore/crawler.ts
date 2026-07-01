@@ -189,20 +189,32 @@ export async function crawl(
     // Never tap INTO an immersive/terminal screen (a player), and respect depth.
     if (leaf || path.length >= opts.maxDepth) return;
 
-    // Read-only safety: only tap controls we can positively identify AND that
-    // aren't destructive. An unlabeled control can't be vetted by the denylist.
-    const safe = candidates.filter((c) => c.label.trim().length > 0 && !isDestructive(c.label, opts.deny));
+    // Tap the screen's controls, RE-READING the live set each round rather than
+    // iterating the list captured on arrival. Returning to this screen (reset +
+    // replay) re-renders the tree, and dynamic content — e.g. search results —
+    // can differ between visits, so a control seen on arrival may be gone. We only
+    // ever tap a control CONFIRMED present in the current tree; a label that has
+    // since vanished is skipped (dynamic content, not a defect) instead of being
+    // charged as a failed tap. `tried` (by label) stops us re-tapping the same
+    // control and guarantees the loop makes progress. Read-only safety still
+    // applies: an unlabelled or denylisted control is never tapped.
+    const tried = new Set<string>();
+    const nextControl = (live: UiElement[]): UiElement | undefined =>
+      live.find((c) => c.label.trim().length > 0 && !tried.has(c.label) && !isDestructive(c.label, opts.deny));
 
     let taps = 0;
-    for (const el of safe) {
-      if (aborted() || budgetHit() || taps >= opts.perScreenTaps) break;
+    while (!aborted() && !budgetHit() && taps < opts.perScreenTaps) {
+      const live = await withTimeout<UiElement[]>(probe.interactive(), LIST_TIMEOUT_MS, []);
+      const el = nextControl(live);
+      if (!el) break; // nothing new currently on screen to try
+      tried.add(el.label);
       taps++;
       const tt0 = now();
       try {
         await withDeadline(probe.tap(el), OP_TIMEOUT_MS, 'tap');
       } catch (err) {
         record({ ok: false, action: 'tap: ' + el.label, error: err instanceof Error ? err.message : String(err), durationMs: now() - tt0 });
-        if (!(await navigateTo(path))) return; // recover position before the next sibling
+        if (!(await navigateTo(path))) return; // recover position before the next control
         continue;
       }
       const after = await withTimeout(probe.signature(), OP_TIMEOUT_MS, sig);
@@ -211,7 +223,7 @@ export async function crawl(
         record({ ok: true, action: 'tap: ' + el.label, detail: '→ new screen', durationMs: now() - tt0 });
         await exploreCurrent([...path, el]); // we are now ON the child screen
       }
-      // Return to THIS screen for the next sibling — reliably, via reset + replay.
+      // Return to THIS screen for the next control — reliably, via reset + replay.
       if (!(await navigateTo(path))) return;
     }
   }

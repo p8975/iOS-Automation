@@ -199,6 +199,63 @@ test('reset-and-replay reaches every sibling even when one branch ends in a play
   assert.ok(probe.resets > 0); // it genuinely reset to recover
 });
 
+test('a control that vanished between visits is skipped, not charged as a failed tap', async () => {
+  // Dynamic screen: home lists [A, B] on arrival, but once A has been explored and
+  // we reset back, B is gone — like search results reshuffling between visits.
+  // The old crawler iterated the list captured on arrival and tapped the now-stale
+  // B, recording a bogus failure; the new one re-reads the live controls each round
+  // and only taps what is present, so B is simply skipped.
+  const state = { aVisited: false };
+  const homeLinks = (): Link[] =>
+    state.aVisited
+      ? [{ label: 'A', to: 'childA' }] // B has vanished after A was explored
+      : [{ label: 'A', to: 'childA' }, { label: 'B', to: 'childB' }];
+
+  class DynProbe implements UiProbe {
+    cur = 'home';
+    readonly tapped: string[] = [];
+    async signature(): Promise<string> {
+      return this.cur;
+    }
+    async describe(): Promise<string> {
+      return this.cur;
+    }
+    async health(): Promise<ScreenHealth> {
+      return { ok: true };
+    }
+    async isLeaf(): Promise<boolean> {
+      return false;
+    }
+    async interactive(): Promise<UiElement[]> {
+      return (this.cur === 'home' ? homeLinks() : []).map((l) => ({ label: l.label, handle: l.label }));
+    }
+    async tap(el: UiElement): Promise<void> {
+      const link = (this.cur === 'home' ? homeLinks() : []).find((l) => l.label === el.handle);
+      if (!link) throw new Error('control not present: ' + String(el.handle)); // stale tap would land here
+      this.tapped.push(link.label);
+      if (link.to === 'childA') {
+        this.cur = 'childA';
+        state.aVisited = true;
+      } else if (link.to === 'childB') {
+        this.cur = 'childB';
+      }
+    }
+    async reset(): Promise<void> {
+      this.cur = 'home';
+    }
+    async capture(name: string): Promise<string | undefined> {
+      return name + '.png';
+    }
+  }
+
+  const probe = new DynProbe();
+  const steps: StepResult[] = [];
+  const outcome = await crawl(probe, opts(), (s) => steps.push(s));
+  assert.equal(probe.tapped.includes('B'), false); // the vanished control is never tapped
+  assert.equal(outcome.problems, 0); // and NOT charged as a failed tap
+  assert.ok(probe.tapped.includes('A'));
+});
+
 test('dismisses interstitials (e.g. dialect popup) before reading each screen', async () => {
   const probe = new FakeProbe(structuredClone(GRAPH), 'home');
   const order: string[] = [];

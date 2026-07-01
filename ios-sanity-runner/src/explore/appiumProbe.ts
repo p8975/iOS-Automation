@@ -393,13 +393,17 @@ export function parseInteractive(
     const rawName = attr(attrs, 'name') ?? '';
     const rawLabel = attr(attrs, 'label') ?? '';
     const field = rawName ? 'name' : 'label';
-    const raw = rawName || rawLabel;
-    const text = decodeXml(raw).trim();
+    const value = decodeXml(rawName || rawLabel); // the element's ACTUAL attribute value
+    const text = value.trim(); // display label (trimmed)
     if (!text) continue; // unidentifiable → the crawler would skip it anyway
     const key = type + '|' + field + '|' + text;
     if (seen.has(key)) continue;
     seen.add(key);
-    const esc = text.replace(/'/g, "\\'");
+    // Match the predicate against the UNTRIMMED value: some STAGE controls carry a
+    // leading/trailing space in their name (e.g. " माइक्रो ड्रामाज़- 2 मिनट एपिसोड"),
+    // and an exact `==` on the trimmed text would never resolve them at tap time —
+    // the control shows up in the inventory but every tap times out.
+    const esc = value.replace(/'/g, "\\'");
     out.push({ label: text, selector: `-ios predicate string:type == 'XCUIElementType${type}' AND ${field} == '${esc}'` });
   }
   return out;
