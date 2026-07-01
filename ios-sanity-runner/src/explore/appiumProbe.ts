@@ -84,16 +84,11 @@ export class AppiumProbe implements UiProbe {
   }
 
   async signature(): Promise<string> {
-    let src: string;
     try {
-      src = await this.#driver.getPageSource();
+      return screenSignature(await this.#driver.getPageSource());
     } catch {
       return 'unavailable';
     }
-    // Drop volatile attributes (coords/sizes/values/indices) so the signature
-    // reflects screen STRUCTURE, not transient state, then hash it.
-    const norm = src.replace(/\b(x|y|width|height|index|value)="[^"]*"/g, '').replace(/\s+/g, ' ');
-    return hash(norm);
   }
 
   async describe(): Promise<string> {
@@ -358,6 +353,31 @@ export function assessScreen(src: string, immersive = false): ScreenHealth {
     if (labelled < 2) return { ok: false, problem: 'screen shows no meaningful content (' + labelled + ' labelled elements)' };
   }
   return { ok: true };
+}
+
+/**
+ * A screen's de-duplication signature: the SORTED MULTISET of its elements'
+ * `type:name` (name falls back to label), hashed. Pure, so it is unit-tested.
+ *
+ * Deliberately identity-based, not structure-based: hashing the raw XML made
+ * re-visits of the SAME screen hash differently because of transient attributes
+ * (focus/selection state, element ordering, volatile wrapper nodes) — inflating
+ * the screen count with near-duplicates. Keying on the set of named elements
+ * ignores that noise while KEEPING content names, so genuinely different pages
+ * (e.g. Movies vs Shows, which carry different titles) stay distinct.
+ */
+export function screenSignature(xml: string): string {
+  const re = /<XCUIElementType(\w+)([^>]*)>/g;
+  const tokens: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    const type = m[1] ?? '';
+    const raw = attr(m[2] ?? '', 'name') ?? attr(m[2] ?? '', 'label') ?? '';
+    const text = decodeXml(raw).trim();
+    if (text) tokens.push(type + ':' + text); // unnamed wrapper nodes carry no identity — skip
+  }
+  tokens.sort();
+  return hash(tokens.join('|'));
 }
 
 /** djb2 — small, dependency-free, good enough for screen de-duplication. */

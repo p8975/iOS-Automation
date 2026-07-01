@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInteractive, assessScreen } from '../src/explore/appiumProbe.ts';
+import { parseInteractive, assessScreen, screenSignature } from '../src/explore/appiumProbe.ts';
 
 const XML = [
   '<?xml version="1.0" encoding="UTF-8"?>',
@@ -61,6 +61,26 @@ test('escapes single quotes in the predicate value', () => {
 
 test('honors the max cap', () => {
   assert.equal(parseInteractive(XML, undefined, 2).length, 2);
+});
+
+test('screenSignature: same screen with transient attrs / reordering hashes identically', () => {
+  // Same two controls, but reordered and with different focus/selection/coords/
+  // index — the noise that made re-visits of one screen count as distinct before.
+  const a = '<XCUIElementTypeButton name="Search" x="0" y="0" focused="false" index="0"/>' + '<XCUIElementTypeCell label="Naate" selected="false" index="1"/>';
+  const b = '<XCUIElementTypeCell label="Naate" selected="true" index="9" x="5" y="90"/>' + '<XCUIElementTypeButton name="Search" focused="true" index="3"/>';
+  assert.equal(screenSignature(a), screenSignature(b));
+});
+
+test('screenSignature: different content (names) hashes differently', () => {
+  const movies = '<XCUIElementTypeButton name="Search"/><XCUIElementTypeCell name="Khejadi"/>';
+  const shows = '<XCUIElementTypeButton name="Search"/><XCUIElementTypeCell name="Naate"/>';
+  assert.notEqual(screenSignature(movies), screenSignature(shows));
+});
+
+test('screenSignature: unnamed wrapper nodes do not affect the signature', () => {
+  const bare = '<XCUIElementTypeButton name="Search"/>';
+  const wrapped = '<XCUIElementTypeOther/><XCUIElementTypeButton name="Search"/><XCUIElementTypeGroup/>';
+  assert.equal(screenSignature(bare), screenSignature(wrapped));
 });
 
 test('trims the label but matches the predicate on the UNTRIMMED name (leading/trailing spaces)', () => {
