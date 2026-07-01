@@ -22,17 +22,33 @@ export class AppiumProbe implements UiProbe {
   readonly #save: (name: string, base64: string) => Promise<string | undefined>;
   readonly #bundleId: string;
   readonly #homeControl: string | undefined;
+  readonly #homeMarkers: readonly string[];
 
   constructor(
     driver: Driver,
     save: (name: string, base64: string) => Promise<string | undefined>,
     bundleId: string,
     homeControl?: string,
+    homeMarkers: readonly string[] = [],
   ) {
     this.#driver = driver;
     this.#save = save;
     this.#bundleId = bundleId;
     this.#homeControl = homeControl;
+    this.#homeMarkers = homeMarkers;
+  }
+
+  /** True when the current screen looks like the app ROOT (home). Home-exclusive
+   *  markers only — a substring that also appears on inner screens would stop the
+   *  back-out early. Empty markers => unknown (reset falls back to fixed back-outs). */
+  async #atHome(): Promise<boolean> {
+    if (this.#homeMarkers.length === 0) return false;
+    try {
+      const src = await this.#driver.getPageSource();
+      return this.#homeMarkers.some((m) => src.includes(m));
+    } catch {
+      return false;
+    }
   }
 
   async signature(): Promise<string> {
@@ -207,37 +223,55 @@ export class AppiumProbe implements UiProbe {
   async reset(): Promise<void> {
     // WARM resume only — foreground the app WITHOUT terminating it. A cold
     // relaunch (terminateApp) drops STAGE to its login/onboarding gate; activate
-    // preserves the signed-in state. Returning to root is then best-effort and
-    // relaunch-free: pop a fullscreen/landscape view (e.g. a player) with the
-    // iOS back-swipe, then tap the app's home control if one is configured.
+    // preserves the signed-in state.
     try {
       await this.#driver.execute('mobile: activateApp', { bundleId: this.#bundleId });
     } catch {
       /* best-effort */
     }
-    for (let i = 0; i < 3; i++) {
+
+    // Return to the app ROOT. activateApp only foregrounds — it does NOT leave the
+    // current screen — and full-screen screens (search, a detail page, a landscape
+    // player) carry no bottom-nav home tab to tap, so the old homeControl click
+    // stranded the crawl there and every sibling tap then failed. Instead drive the
+    // iOS left-edge BACK gesture until a home marker shows: it's name-independent,
+    // Flutter-friendly, and verified to bring STAGE back from search to home.
+    for (let i = 0; i < 6; i++) {
+      if (await this.#atHome()) break;
       let landscape = false;
       try {
         landscape = String((await this.#driver.getOrientation()) ?? '').toUpperCase().startsWith('LANDSCAPE');
       } catch {
-        /* ignore */
+        /* assume portrait */
       }
-      if (!landscape) break;
       try {
-        await this.#driver.execute('mobile: swipe', { direction: 'right' });
+        if (landscape) {
+          // A landscape player won't accept the edge drag — rotate out with a plain swipe.
+          await this.#driver.execute('mobile: swipe', { direction: 'right' });
+        } else {
+          const rect = (await this.#driver.getWindowRect()) as { width: number; height: number };
+          const midY = Math.floor(rect.height / 2);
+          await this.#driver.execute('mobile: dragFromToForDuration', {
+            duration: 0.3, fromX: 3, fromY: midY, toX: Math.floor(rect.width * 0.9), toY: midY,
+          });
+        }
       } catch {
-        /* best-effort */
+        /* best-effort — re-check on the next loop */
       }
       try {
-        await this.#driver.pause(500);
+        await this.#driver.pause(700);
       } catch {
         /* ignore */
       }
     }
+
+    // If a home control is configured and present, tap it to normalize onto the
+    // Home tab (backing out may land on a different tab). Best-effort; matches by
+    // name OR label since some tabs expose only one.
     if (this.#homeControl) {
       try {
         const esc = this.#homeControl.replace(/'/g, "\\'");
-        const el = await this.#driver.$("-ios predicate string:name == '" + esc + "'");
+        const el = await this.#driver.$("-ios predicate string:name == '" + esc + "' OR label == '" + esc + "'");
         if (await el.isExisting()) await el.click();
       } catch {
         /* home control not present here — best-effort */

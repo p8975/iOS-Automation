@@ -136,7 +136,13 @@ export class Explorer {
           return undefined;
         }
       };
-      const probe = new AppiumProbe(driver, save, this.#config.bundleId, this.#config.explore?.homeControl);
+      const probe = new AppiumProbe(
+        driver,
+        save,
+        this.#config.bundleId,
+        this.#config.explore?.homeControl,
+        this.#config.explore?.homeMarkers ?? [],
+      );
 
       // A fresh launch stacks native permission alerts (ATT / notifications /
       // location) OVER the app — they leave the page source near-empty and block

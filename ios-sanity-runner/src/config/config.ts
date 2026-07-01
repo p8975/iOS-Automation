@@ -47,6 +47,10 @@ export interface RunnerConfig {
     /** Accessibility name of the app's "home" control (e.g. a bottom-nav tab). When
      *  set, the warm reset taps it to return to root without relaunching the app. */
     homeControl?: string;
+    /** HOME-EXCLUSIVE page-source substrings (e.g. the "My List" nav label). The
+     *  warm reset back-swipes until one appears, so pick markers that DON'T also
+     *  show on inner screens. Falls back to a fixed number of back-outs if unset. */
+    homeMarkers?: string[];
     /** When the run starts on the login screen: true (default) = capture/validate it,
      *  then auto-login and explore the signed-in app; false = validate the login flow
      *  only (do not log in). */
