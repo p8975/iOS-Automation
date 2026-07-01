@@ -64,6 +64,16 @@ export interface ScreenHealth {
   problem?: string;
 }
 
+/** An AI-derived screen identity (see {@link ScreenClassifier}). */
+export interface ScreenIdentity {
+  /** Stable short id/slug for the screen, e.g. "home", "search", "movie_detail". */
+  id: string;
+  /** Short human-readable title, used as the screen's step label. */
+  title: string;
+  /** Whether this is the app ROOT/home — the surest home signal we have. */
+  isHome: boolean;
+}
+
 /** The only contact surface with the device. Real impl: AppiumProbe. */
 export interface UiProbe {
   /** Stable signature of the current screen, for visited de-duplication. */
@@ -86,6 +96,10 @@ export interface UiProbe {
    *  permission alert) sitting over the screen, so the reads/taps that follow act
    *  on the real content beneath. Optional — a no-op when unimplemented. */
   dismissInterstitials?(): Promise<void>;
+  /** AI-identify the current screen (title + is-it-home) from a screenshot + the
+   *  given element labels. Optional — returns null when no classifier is
+   *  configured, and the crawler falls back to describe()/heuristics. */
+  identify?(elements: readonly string[]): Promise<ScreenIdentity | null>;
 }
 
 export interface CrawlOptions {
@@ -177,13 +191,18 @@ export async function crawl(
     const idx = ++screenCounter;
 
     const t0 = now();
-    const label = await withTimeout(probe.describe(), OP_TIMEOUT_MS, 'screen');
     const health = await withTimeout(probe.health(), OP_TIMEOUT_MS, { ok: false, problem: 'health check timed out' });
     const leaf = await withTimeout(probe.isLeaf(), OP_TIMEOUT_MS, false);
     const shot = await withTimeout<string | undefined>(probe.capture('screen-' + idx), OP_TIMEOUT_MS, undefined);
     // Enumerate the controls once — both as the tap candidates AND as the element
     // inventory the AI judge uses to validate the screen.
     const candidates = await withTimeout<UiElement[]>(probe.interactive(), LIST_TIMEOUT_MS, []);
+    // AI screen identification (optional): a real title beats describe()'s generic
+    // "screen", and its is-home verdict teaches reset() what home looks like.
+    const identity = probe.identify
+      ? await withTimeout(probe.identify(candidates.map((c) => c.label)), LIST_TIMEOUT_MS, null)
+      : null;
+    const label = identity?.title ?? (await withTimeout(probe.describe(), OP_TIMEOUT_MS, 'screen'));
     record({
       ok: health.ok,
       action: 'screen: ' + label,

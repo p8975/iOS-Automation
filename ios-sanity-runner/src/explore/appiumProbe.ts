@@ -5,7 +5,8 @@
  * fake probe.
  */
 import type { Driver } from '../session/appiumSession.ts';
-import type { ScreenHealth, UiElement, UiProbe } from './crawler.ts';
+import type { ScreenHealth, ScreenIdentity, UiElement, UiProbe } from './crawler.ts';
+import type { ScreenClassifier } from './aiClassifier.ts';
 
 // Classic natively-accessible control types. STAGE is Flutter, which instead
 // renders tappables as Image/Other nodes marked accessible="true" — so the
@@ -26,6 +27,11 @@ export class AppiumProbe implements UiProbe {
   readonly #bundleId: string;
   readonly #homeControl: string | undefined;
   readonly #homeMarkers: readonly string[];
+  readonly #classifier: ScreenClassifier | null;
+  // Signatures the AI classifier has confirmed as home — reset() treats any of
+  // these as "we're home" (cheap, no LLM call), which fixes home detection on
+  // content variants the static homeMarkers miss.
+  readonly #knownHomeSigs = new Set<string>();
 
   constructor(
     driver: Driver,
@@ -33,12 +39,37 @@ export class AppiumProbe implements UiProbe {
     bundleId: string,
     homeControl?: string,
     homeMarkers: readonly string[] = [],
+    classifier: ScreenClassifier | null = null,
   ) {
     this.#driver = driver;
     this.#save = save;
     this.#bundleId = bundleId;
     this.#homeControl = homeControl;
     this.#homeMarkers = homeMarkers;
+    this.#classifier = classifier;
+  }
+
+  /** AI-identify the current screen from a screenshot + element labels. Returns
+   *  null when no classifier is configured or it errors (→ crawler falls back to
+   *  describe()). As a side effect, an AI-confirmed home has its signature recorded
+   *  so reset() can recognise home cheaply thereafter. */
+  async identify(elements: readonly string[]): Promise<ScreenIdentity | null> {
+    if (!this.#classifier) return null;
+    let shot: string;
+    try {
+      shot = await this.#driver.takeScreenshot();
+    } catch {
+      return null;
+    }
+    const identity = await this.#classifier.classify(shot, elements);
+    if (identity?.isHome) {
+      try {
+        this.#knownHomeSigs.add(screenSignature(await this.#driver.getPageSource()));
+      } catch {
+        /* best-effort — the identity is still returned */
+      }
+    }
+    return identity;
   }
 
   /** Close a modal/overlay by a common affordance (Dismiss / Close / Back / ✕).
@@ -291,7 +322,9 @@ export class AppiumProbe implements UiProbe {
       } catch {
         /* best-effort — act anyway */
       }
-      if (this.#homeMarkers.some((m) => src.includes(m))) break; // reached home
+      // Home when a static marker matches OR the AI has confirmed this screen's
+      // signature as home before (covers content variants the markers miss).
+      if (this.#homeMarkers.some((m) => src.includes(m)) || (src !== '' && this.#knownHomeSigs.has(screenSignature(src)))) break;
       if (src !== '' && src === prev) break; // last action changed nothing → stop, don't thrash
       prev = src;
       if (!(await this.#tapClose())) await this.#backGesture();

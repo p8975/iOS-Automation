@@ -23,6 +23,7 @@ import { createOtpProvider } from '../otp/index.ts';
 import { DEFAULT_DENY } from './denylist.ts';
 import { crawl, type CrawlOptions } from './crawler.ts';
 import { AppiumProbe } from './appiumProbe.ts';
+import { createScreenClassifier } from './aiClassifier.ts';
 
 const SUITE = 'exploration';
 
@@ -142,6 +143,7 @@ export class Explorer {
         this.#config.bundleId,
         this.#config.explore?.homeControl,
         this.#config.explore?.homeMarkers ?? [],
+        createScreenClassifier(this.#config.ai),
       );
 
       // A fresh launch stacks native permission alerts (ATT / notifications /

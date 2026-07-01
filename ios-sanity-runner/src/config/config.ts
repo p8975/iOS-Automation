@@ -4,6 +4,7 @@ import type { OtpConfig } from '../otp/otpProvider.ts';
 import type { Target } from '../types.ts';
 import type { LocatorSpec } from '../suite/schema.ts';
 import type { AutoLoginConfig } from '../login/appLogin.ts';
+import type { AiConfig } from '../explore/aiClassifier.ts';
 
 /** App-specific locators for the OTP login screen. */
 export interface LoginLocators {
@@ -56,6 +57,10 @@ export interface RunnerConfig {
      *  only (do not log in). */
     loginThenContinue?: boolean;
   };
+  /** OPTIONAL AI screen-identification layer. Disabled unless `enabled` AND an API
+   *  key resolves (config `apiKey` or the ANTHROPIC_API_KEY env var). Off => the
+   *  crawler runs its heuristics unchanged. */
+  ai?: AiConfig;
   artifactsDir: string;
 }
 
