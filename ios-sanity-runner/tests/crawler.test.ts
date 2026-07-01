@@ -199,6 +199,29 @@ test('reset-and-replay reaches every sibling even when one branch ends in a play
   assert.ok(probe.resets > 0); // it genuinely reset to recover
 });
 
+test('explores breadth-first: shallow siblings are visited before a deep subtree drains the budget', async () => {
+  // home → A (deep chain A→A1→A2→A3), B, C (both shallow). With a tight screen
+  // budget, depth-first would sink into A's chain (home, A, A1, A2) and never
+  // reach B/C. Breadth-first must read all of home's children (A, B, C) first, so
+  // one deep subtree can't monopolise the run.
+  const graph: Record<string, Screen> = {
+    home: { sig: 'home', label: 'Home', ok: true, links: [{ label: 'toA', to: 'A' }, { label: 'toB', to: 'B' }, { label: 'toC', to: 'C' }] },
+    A: { sig: 'A', label: 'A', ok: true, links: [{ label: 'toA1', to: 'A1' }] },
+    A1: { sig: 'A1', label: 'A1', ok: true, links: [{ label: 'toA2', to: 'A2' }] },
+    A2: { sig: 'A2', label: 'A2', ok: true, links: [{ label: 'toA3', to: 'A3' }] },
+    A3: { sig: 'A3', label: 'A3', ok: true, links: [] },
+    B: { sig: 'B', label: 'B', ok: true, links: [] },
+    C: { sig: 'C', label: 'C', ok: true, links: [] },
+  };
+  const probe = new FakeProbe(graph, 'home');
+  const steps: StepResult[] = [];
+  const outcome = await crawl(probe, opts({ maxScreens: 4 }), (s) => steps.push(s));
+  const labels = screenLabels(steps);
+  assert.equal(outcome.screensVisited, 4); // home + its three children
+  for (const l of ['A', 'B', 'C']) assert.ok(labels.includes(l), 'sibling ' + l + ' must be reached before descending');
+  assert.equal(labels.includes('A1'), false); // the deep chain did NOT monopolise the budget
+});
+
 test('a control that vanished between visits is skipped, not charged as a failed tap', async () => {
   // Dynamic screen: home lists [A, B] on arrival, but once A has been explored and
   // we reset back, B is gone — like search results reshuffling between visits.

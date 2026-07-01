@@ -41,16 +41,45 @@ export class AppiumProbe implements UiProbe {
     this.#homeMarkers = homeMarkers;
   }
 
-  /** True when the current screen looks like the app ROOT (home). Home-exclusive
-   *  markers only — a substring that also appears on inner screens would stop the
-   *  back-out early. Empty markers => unknown (reset falls back to fixed back-outs). */
-  async #atHome(): Promise<boolean> {
-    if (this.#homeMarkers.length === 0) return false;
+  /** Close a modal/overlay by a common affordance (Dismiss / Close / Back / ✕).
+   *  Returns true if it clicked one. Read-only-safe: a close/back never mutates
+   *  account state, and reset() only ever wants to move TOWARDS the root. */
+  async #tapClose(): Promise<boolean> {
+    const names = ['Dismiss', 'Close', 'बंद करें', 'बंद', 'वापस जाएं', 'वापस', 'Back', 'Cancel', 'रद्द करें', '✕', '×'];
+    for (const n of names) {
+      try {
+        const b = await this.#driver.$("-ios predicate string:name == '" + n.replace(/'/g, "\\'") + "'");
+        if (await b.isExisting()) {
+          await b.click();
+          return true;
+        }
+      } catch {
+        /* try the next affordance */
+      }
+    }
+    return false;
+  }
+
+  /** iOS back: a left-edge drag in portrait; a plain right-swipe out of a landscape player. */
+  async #backGesture(): Promise<void> {
+    let landscape = false;
     try {
-      const src = await this.#driver.getPageSource();
-      return this.#homeMarkers.some((m) => src.includes(m));
+      landscape = String((await this.#driver.getOrientation()) ?? '').toUpperCase().startsWith('LANDSCAPE');
     } catch {
-      return false;
+      /* assume portrait */
+    }
+    try {
+      if (landscape) {
+        await this.#driver.execute('mobile: swipe', { direction: 'right' });
+      } else {
+        const rect = (await this.#driver.getWindowRect()) as { width: number; height: number };
+        const midY = Math.floor(rect.height / 2);
+        await this.#driver.execute('mobile: dragFromToForDuration', {
+          duration: 0.3, fromX: 3, fromY: midY, toX: Math.floor(rect.width * 0.9), toY: midY,
+        });
+      }
+    } catch {
+      /* best-effort — re-check on the next loop */
     }
   }
 
@@ -250,33 +279,27 @@ export class AppiumProbe implements UiProbe {
     }
 
     // Return to the app ROOT. activateApp only foregrounds — it does NOT leave the
-    // current screen — and full-screen screens (search, a detail page, a landscape
-    // player) carry no bottom-nav home tab to tap, so the old homeControl click
-    // stranded the crawl there and every sibling tap then failed. Instead drive the
-    // iOS left-edge BACK gesture until a home marker shows: it's name-independent,
-    // Flutter-friendly, and verified to bring STAGE back from search to home.
-    for (let i = 0; i < 6; i++) {
-      if (await this.#atHome()) break;
-      let landscape = false;
+    // current screen — and full-screen screens (search, a detail page) carry no
+    // bottom-nav home tab to tap, so the old homeControl click stranded the crawl
+    // there and every sibling tap then failed. Back out toward home instead.
+    // A Flutter MODAL (e.g. the "श्रेणियाँ" categories sheet) ignores the back
+    // gesture, so each round we first try to CLOSE an overlay by its affordance
+    // (Dismiss / Close / Back), then fall back to the back gesture. Stop as soon as
+    // a home marker shows OR the last action changed nothing (at root / stuck):
+    // that self-limit is essential — blindly swiping on a screen the gesture can't
+    // leave scrolls the home chips out of view and breaks every replay tap after.
+    let prev = '';
+    for (let i = 0; i < 8; i++) {
+      let src = '';
       try {
-        landscape = String((await this.#driver.getOrientation()) ?? '').toUpperCase().startsWith('LANDSCAPE');
+        src = await this.#driver.getPageSource();
       } catch {
-        /* assume portrait */
+        /* best-effort — act anyway */
       }
-      try {
-        if (landscape) {
-          // A landscape player won't accept the edge drag — rotate out with a plain swipe.
-          await this.#driver.execute('mobile: swipe', { direction: 'right' });
-        } else {
-          const rect = (await this.#driver.getWindowRect()) as { width: number; height: number };
-          const midY = Math.floor(rect.height / 2);
-          await this.#driver.execute('mobile: dragFromToForDuration', {
-            duration: 0.3, fromX: 3, fromY: midY, toX: Math.floor(rect.width * 0.9), toY: midY,
-          });
-        }
-      } catch {
-        /* best-effort — re-check on the next loop */
-      }
+      if (this.#homeMarkers.some((m) => src.includes(m))) break; // reached home
+      if (src !== '' && src === prev) break; // last action changed nothing → stop, don't thrash
+      prev = src;
+      if (!(await this.#tapClose())) await this.#backGesture();
       try {
         await this.#driver.pause(700);
       } catch {

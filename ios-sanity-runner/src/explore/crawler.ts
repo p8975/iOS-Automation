@@ -115,7 +115,8 @@ export async function crawl(
 ): Promise<CrawlOutcome> {
   const now = opts.now ?? ((): number => Date.now());
   const start = now();
-  const visited = new Set<string>();
+  const visited = new Set<string>(); // signatures of screens we have READ
+  const frontier = new Set<string>(); // signatures discovered + enqueued, not yet read (no double-enqueue)
   const steps: StepResult[] = [];
   let problems = 0;
   let screenCounter = 0;
@@ -155,17 +156,24 @@ export async function crawl(
     return true;
   }
 
-  /** Explore the screen we are CURRENTLY on, whose tap-path from root is `path`. */
-  async function exploreCurrent(path: UiElement[]): Promise<void> {
-    if (aborted() || budgetHit()) return;
+  /**
+   * Read the screen we are CURRENTLY on (tap-path from root = `path`) and return
+   * the child paths it opens — each `path` + the control that led to a NEW screen.
+   * Children are RETURNED, not descended into, so the caller can explore them in
+   * BREADTH-FIRST order: every sibling screen is read before we go deeper, so one
+   * large or deep subtree (e.g. Search) can no longer consume the whole budget.
+   */
+  async function visit(path: UiElement[]): Promise<UiElement[][]> {
+    if (aborted() || budgetHit()) return [];
 
     // Clear any blocking interstitial (e.g. the dialect popup) sitting over the
     // screen so the signature/health/tap reads below act on the content beneath.
     if (probe.dismissInterstitials) await withTimeout(probe.dismissInterstitials(), OP_TIMEOUT_MS, undefined);
 
     const sig = await withTimeout(probe.signature(), OP_TIMEOUT_MS, 'timeout-' + path.length);
-    if (visited.has(sig)) return;
+    if (visited.has(sig)) return [];
     visited.add(sig);
+    frontier.delete(sig);
     const idx = ++screenCounter;
 
     const t0 = now();
@@ -187,7 +195,7 @@ export async function crawl(
     });
 
     // Never tap INTO an immersive/terminal screen (a player), and respect depth.
-    if (leaf || path.length >= opts.maxDepth) return;
+    if (leaf || path.length >= opts.maxDepth) return [];
 
     // Tap the screen's controls, RE-READING the live set each round rather than
     // iterating the list captured on arrival. Returning to this screen (reset +
@@ -198,6 +206,7 @@ export async function crawl(
     // charged as a failed tap. `tried` (by label) stops us re-tapping the same
     // control and guarantees the loop makes progress. Read-only safety still
     // applies: an unlabelled or denylisted control is never tapped.
+    const children: UiElement[][] = [];
     const tried = new Set<string>();
     const nextControl = (live: UiElement[]): UiElement | undefined =>
       live.find((c) => c.label.trim().length > 0 && !tried.has(c.label) && !isDestructive(c.label, opts.deny));
@@ -214,22 +223,33 @@ export async function crawl(
         await withDeadline(probe.tap(el), OP_TIMEOUT_MS, 'tap');
       } catch (err) {
         record({ ok: false, action: 'tap: ' + el.label, error: err instanceof Error ? err.message : String(err), durationMs: now() - tt0 });
-        if (!(await navigateTo(path))) return; // recover position before the next control
+        if (!(await navigateTo(path))) return children; // recover position before the next control
         continue;
       }
       const after = await withTimeout(probe.signature(), OP_TIMEOUT_MS, sig);
       if (after === sig) continue; // no navigation — still here, try the next control
-      if (!visited.has(after)) {
+      if (!visited.has(after) && !frontier.has(after)) {
         record({ ok: true, action: 'tap: ' + el.label, detail: '→ new screen', durationMs: now() - tt0 });
-        await exploreCurrent([...path, el]); // we are now ON the child screen
+        frontier.add(after);
+        children.push([...path, el]); // explore LATER, breadth-first — do NOT descend now
       }
       // Return to THIS screen for the next control — reliably, via reset + replay.
-      if (!(await navigateTo(path))) return;
+      if (!(await navigateTo(path))) return children;
     }
+    return children;
   }
 
+  // Breadth-first frontier: read the root, then each discovered screen in the
+  // order found — all of a level's siblings before any of their children. FIFO is
+  // what stops one deep subtree from monopolising the budget.
+  const queue: UiElement[][] = [];
   if (await navigateTo([])) {
-    await exploreCurrent([]);
+    for (const child of await visit([])) queue.push(child);
+  }
+  while (queue.length > 0 && !aborted() && !budgetHit()) {
+    const path = queue.shift() as UiElement[];
+    if (!(await navigateTo(path))) continue; // couldn't reach it (dynamic content) — skip
+    for (const child of await visit(path)) queue.push(child);
   }
   const stoppedReason = aborted() ? 'aborted' : budgetHit() ? 'budget' : 'completed';
   return { steps, screensVisited: visited.size, problems, stoppedReason };
