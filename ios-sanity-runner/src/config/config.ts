@@ -3,6 +3,7 @@ import yaml from 'js-yaml';
 import type { OtpConfig } from '../otp/otpProvider.ts';
 import type { Target } from '../types.ts';
 import type { LocatorSpec } from '../suite/schema.ts';
+import type { AutoLoginConfig } from '../login/appLogin.ts';
 
 /** App-specific locators for the OTP login screen. */
 export interface LoginLocators {
@@ -29,8 +30,28 @@ export interface RunnerConfig {
   };
   /** How the drift check determines an account's real state. */
   stateBackend?: { statusUrl?: string; apiKey?: string };
-  /** Locators for the OTP login screen (app-specific). */
+  /** Locators for the OTP login screen (app-specific) — used by LoginHandler. */
   login?: LoginLocators;
+  /** Keyboard-based auto-login for Flutter apps (typed via the native keyboard);
+   *  the exploratory crawl runs this before crawling so it reaches signed-in content. */
+  autoLogin?: AutoLoginConfig;
+  /** Optional tuning for the autonomous exploratory crawl (safe defaults baked in). */
+  explore?: {
+    /** Extra denylist substrings, merged conceptually with the built-in safe defaults. */
+    deny?: string[];
+    maxSteps?: number;
+    maxDepth?: number;
+    maxScreens?: number;
+    perScreenTaps?: number;
+    timeBudgetMs?: number;
+    /** Accessibility name of the app's "home" control (e.g. a bottom-nav tab). When
+     *  set, the warm reset taps it to return to root without relaunching the app. */
+    homeControl?: string;
+    /** When the run starts on the login screen: true (default) = capture/validate it,
+     *  then auto-login and explore the signed-in app; false = validate the login flow
+     *  only (do not log in). */
+    loginThenContinue?: boolean;
+  };
   artifactsDir: string;
 }
 

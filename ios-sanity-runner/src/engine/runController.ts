@@ -21,6 +21,13 @@ import {
   type Account,
   RunnerError,
 } from '../types.ts';
+import {
+  newRunId,
+  runStartedEvent,
+  runFinishedEvent,
+  type RunObserver,
+  type SuiteRef,
+} from '../events/runEvents.ts';
 
 export interface RunOptions {
   target?: Target;
@@ -56,18 +63,35 @@ export class RunController {
    * device). A thrown run becomes a failed SuiteResult — one bad suite never
    * aborts the batch.
    */
+  /** Resolved {suite, state, target} for each item — known before execution. */
+  previewTargets(
+    items: ReadonlyArray<{ suite: SuiteDefinition; opts?: RunOptions }>,
+  ): SuiteRef[] {
+    return items.map((it) => ({
+      suite: it.suite.suite,
+      state: it.suite.requires,
+      target: this.resolveTarget(it.suite, it.opts ?? {}),
+    }));
+  }
+
   async runSuites(
     items: ReadonlyArray<{ suite: SuiteDefinition; opts?: RunOptions }>,
     concurrency = 1,
+    observer?: RunObserver,
   ): Promise<SuiteResult[]> {
-    const settled = await mapWithConcurrency(items, concurrency, (it) => this.runSuite(it.suite, it.opts));
-    return settled.map((r, i) => {
+    const runId = newRunId();
+    observer?.(runStartedEvent(runId, new Date().toISOString(), this.previewTargets(items)));
+    const settled = await mapWithConcurrency(items, concurrency, (it) =>
+      this.runSuite(it.suite, it.opts, observer, runId),
+    );
+    const results = settled.map((r, i) => {
       if (r.status === 'fulfilled') return r.value;
       const item = items[i]!;
       const now = new Date().toISOString();
-      return {
+      const target = this.resolveTarget(item.suite, item.opts ?? {});
+      const result: SuiteResult = {
         suite: item.suite.suite,
-        target: this.resolveTarget(item.suite, item.opts ?? {}),
+        target,
         state: item.suite.requires,
         ok: false,
         steps: [],
@@ -75,16 +99,43 @@ export class RunController {
         finishedAt: now,
         error: r.reason instanceof Error ? r.reason.message : String(r.reason),
       };
+      // runSuite throws only before its own try (e.g. no account to lease), so
+      // it never emitted suite_finished — close the suite out here.
+      observer?.({ type: 'suite_finished', runId, suite: result.suite, target, result });
+      return result;
     });
+    observer?.(runFinishedEvent(runId, new Date().toISOString(), results));
+    return results;
   }
 
-  async runSuite(suite: SuiteDefinition, opts: RunOptions = {}): Promise<SuiteResult> {
+  /**
+   * @param observer optional live-progress sink. When present, emits
+   *   `suite_started`, one `step_finished` per authored step, and
+   *   `suite_finished`. Omit it and the method behaves exactly as before.
+   * @param runId ties events to a batch; generated standalone if omitted.
+   */
+  async runSuite(
+    suite: SuiteDefinition,
+    opts: RunOptions = {},
+    observer?: RunObserver,
+    runId?: string,
+  ): Promise<SuiteResult> {
+    const rid = runId ?? newRunId();
     const startedAt = new Date().toISOString();
     const target = this.resolveTarget(suite, opts);
     const declared = suite.requires;
     const steps: StepResult[] = [];
     const lease = this.registry.checkout(declared);
     let session: AppiumSession | null = null;
+
+    observer?.({ type: 'suite_started', runId: rid, suite: suite.suite, target, state: declared, startedAt });
+
+    let stepIndex = 0;
+    const onStep = observer
+      ? (result: StepResult, _index?: number): void => {
+          observer!({ type: 'step_finished', runId: rid, suite: suite.suite, target, index: stepIndex++, step: result });
+        }
+      : undefined;
 
     try {
       const manager = this.managerFor(target);
@@ -109,11 +160,11 @@ export class RunController {
         matrices: (suite.matrices ?? {}) as Record<string, Record<string, { visible?: string[]; absent?: string[] }>>,
         defaultTimeoutMs: 15_000,
       });
-      steps.push(...(await runner.runSteps(suite.steps as unknown[])));
+      steps.push(...(await runner.runSteps(suite.steps as unknown[], onStep)));
 
       // --- teardown ---
       if (suite.teardown.length > 0) {
-        steps.push(...(await runner.runSteps(suite.teardown as unknown[])));
+        steps.push(...(await runner.runSteps(suite.teardown as unknown[], onStep)));
       }
 
       const ok = steps.every((s) => s.ok);
@@ -127,10 +178,11 @@ export class RunController {
         finishedAt: new Date().toISOString(),
       };
       await this.captureFailureArtifact(session, suite, ok);
+      observer?.({ type: 'suite_finished', runId: rid, suite: suite.suite, target, result });
       return result;
     } catch (err) {
       if (session) await this.captureFailureArtifact(session, suite, false);
-      return {
+      const result: SuiteResult = {
         suite: suite.suite,
         target,
         state: declared,
@@ -140,6 +192,8 @@ export class RunController {
         finishedAt: new Date().toISOString(),
         error: err instanceof Error ? err.message : String(err),
       };
+      observer?.({ type: 'suite_finished', runId: rid, suite: suite.suite, target, result });
+      return result;
     } finally {
       if (session) await session.stop().catch(() => {});
       lease.release();
