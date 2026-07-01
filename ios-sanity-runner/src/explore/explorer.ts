@@ -138,6 +138,11 @@ export class Explorer {
       };
       const probe = new AppiumProbe(driver, save, this.#config.bundleId, this.#config.explore?.homeControl);
 
+      // A fresh launch stacks native permission alerts (ATT / notifications /
+      // location) OVER the app — they leave the page source near-empty and block
+      // login. Clear them before reading the entry screen or attempting login.
+      await probe.dismissInterstitials();
+
       // If we start on the login screen, capture it as a JUDGED screen (its
       // elements get validated) rather than silently skipping past it.
       const entrySrc = await driver.getPageSource().catch(() => '');

@@ -99,9 +99,58 @@ export class AppiumProbe implements UiProbe {
   }
 
   /**
+   * Clear native SYSTEM permission alerts (SpringBoard), choosing the button that
+   * lets QA keep moving into content. Generic by design: it reads whatever buttons
+   * the current alert actually has (`mobile: alert` reaches SpringBoard alerts the
+   * app page source can't see) and clicks the most "proceed" one — so a brand-new
+   * permission prompt it has never been told about is still handled.
+   *
+   * A fresh launch (and the beat right after login) can STACK several alerts, and
+   * some — notably STAGE's location prompt — appear a beat LATE, so we poll a few
+   * rounds and wait briefly for a late arrival before giving up.
+   */
+  async #dismissSystemAlerts(): Promise<void> {
+    // Preference order: options that keep the app advancing into real content.
+    // "Ask App Not to Track" is the ATT decline (still proceeds); the location
+    // prompt's "Allow While Using App" lets regional content load.
+    const PREFER = [
+      'Allow While Using App', 'Allow Once', 'Allow', 'OK', 'Continue',
+      'Ask App Not to Track', "Don't Allow",
+    ];
+    const buttons = async (): Promise<string[] | undefined> => {
+      try {
+        return (await this.#driver.execute('mobile: alert', { action: 'getButtons' })) as unknown as string[];
+      } catch {
+        return undefined; // no alert currently open
+      }
+    };
+    for (let round = 0; round < 6; round++) {
+      let names = await buttons();
+      if (!names || names.length === 0) {
+        // Nothing open right now — wait once for a late-appearing alert, re-check.
+        await this.#driver.pause(500);
+        names = await buttons();
+        if (!names || names.length === 0) return; // genuinely none
+      }
+      const choice = PREFER.find((p) => names.includes(p)) ?? names[names.length - 1];
+      try {
+        await this.#driver.execute('mobile: alert', { action: 'accept', buttonLabel: choice });
+      } catch {
+        try {
+          await this.#driver.execute('mobile: alert', { action: 'accept' });
+        } catch {
+          return; // couldn't act on it — leave for the next pass
+        }
+      }
+      await this.#driver.pause(700);
+    }
+  }
+
+  /**
    * Dismiss blocking interstitials that sit over the app's own screens so the
    * next action can proceed:
-   *   1) a native iOS permission alert (e.g. location) — tap its accept button;
+   *   1) native iOS permission alerts (ATT / location / notifications / …) —
+   *      cleared generically by {@link #dismissSystemAlerts};
    *   2) the Flutter "अपनी बोली चुनें" (choose your dialect) / culture popup —
    *      tap its close ("Dismiss") or continue ("आगे बढे") control.
    * A dialect OPTION is never tapped (that would change the selected culture);
@@ -109,19 +158,10 @@ export class AppiumProbe implements UiProbe {
    * Best-effort and fast: any failure is swallowed so it can run every step.
    */
   async dismissInterstitials(): Promise<void> {
-    // 1) Native permission alert — query its accept button (no throw when absent,
-    //    unlike `mobile: alert` which errors loudly with no dialog open).
-    try {
-      const b = await this.#driver.$(
-        "-ios predicate string:type == 'XCUIElementTypeButton' AND (name == 'Allow While Using App' OR name == 'Allow Once' OR name == 'Allow' OR name == 'OK')",
-      );
-      if (await b.isExisting()) {
-        await b.click();
-        await this.#driver.pause(800);
-      }
-    } catch {
-      /* no native alert */
-    }
+    // 1) Native SYSTEM permission alerts (ATT tracking, location, notifications,
+    //    camera, …). They belong to SpringBoard, not the app tree, so an
+    //    app-scoped element query misses them — only the alert API reaches them.
+    await this.#dismissSystemAlerts();
 
     // 2) Flutter dialect/culture popup — only if its title is on screen.
     // Try a few times: tap a close control, re-check the source, repeat until the
