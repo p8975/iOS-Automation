@@ -159,6 +159,18 @@ export class Explorer {
         });
       }
 
+      // The dialect/culture popup ("अपनी बोली चुनें") often surfaces a beat AFTER
+      // login settles on home, so a single pre-crawl check races it. Poll briefly
+      // and dismiss it (Dismiss / आगे बढे) so the crawl starts on real content.
+      if (loginThenContinue) {
+        for (let i = 0; i < 5; i++) {
+          await driver.pause(1000);
+          await probe.dismissInterstitials();
+          const s = await driver.getPageSource().catch(() => '');
+          if (!/अपनी बोली चुनें|बोली चुनें|Choose your dialect/.test(s)) break;
+        }
+      }
+
       const outcome = await crawl(probe, opts, onStep);
       crawlReason = outcome.stoppedReason;
     } catch (err) {

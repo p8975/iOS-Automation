@@ -98,6 +98,53 @@ export class AppiumProbe implements UiProbe {
     await e.click();
   }
 
+  /**
+   * Dismiss blocking interstitials that sit over the app's own screens so the
+   * next action can proceed:
+   *   1) a native iOS permission alert (e.g. location) — tap its accept button;
+   *   2) the Flutter "अपनी बोली चुनें" (choose your dialect) / culture popup —
+   *      tap its close ("Dismiss") or continue ("आगे बढे") control.
+   * A dialect OPTION is never tapped (that would change the selected culture);
+   * only the close/continue affordance is used, leaving the selection intact.
+   * Best-effort and fast: any failure is swallowed so it can run every step.
+   */
+  async dismissInterstitials(): Promise<void> {
+    // 1) Native permission alert — query its accept button (no throw when absent,
+    //    unlike `mobile: alert` which errors loudly with no dialog open).
+    try {
+      const b = await this.#driver.$(
+        "-ios predicate string:type == 'XCUIElementTypeButton' AND (name == 'Allow While Using App' OR name == 'Allow Once' OR name == 'Allow' OR name == 'OK')",
+      );
+      if (await b.isExisting()) {
+        await b.click();
+        await this.#driver.pause(800);
+      }
+    } catch {
+      /* no native alert */
+    }
+
+    // 2) Flutter dialect/culture popup — only if its title is on screen.
+    let src: string;
+    try {
+      src = await this.#driver.getPageSource();
+    } catch {
+      return;
+    }
+    if (!/अपनी बोली चुनें|बोली चुनें|Choose your dialect/.test(src)) return;
+    for (const name of ['Dismiss', 'आगे बढे', 'आगे बढ़ें']) {
+      try {
+        const b = await this.#driver.$("-ios predicate string:name == '" + name + "'");
+        if (await b.isExisting()) {
+          await b.click();
+          await this.#driver.pause(1200);
+          return;
+        }
+      } catch {
+        /* try the next control */
+      }
+    }
+  }
+
   async isLeaf(): Promise<boolean> {
     // A content app rotates to landscape for its media player; treat any
     // landscape screen as an immersive/terminal leaf (record it, don't tap in).

@@ -198,3 +198,23 @@ test('reset-and-replay reaches every sibling even when one branch ends in a play
   assert.equal(outcome.screensVisited, 3);
   assert.ok(probe.resets > 0); // it genuinely reset to recover
 });
+
+test('dismisses interstitials (e.g. dialect popup) before reading each screen', async () => {
+  const probe = new FakeProbe(structuredClone(GRAPH), 'home');
+  const order: string[] = [];
+  const origSig = probe.signature.bind(probe);
+  probe.signature = async (): Promise<string> => {
+    order.push('signature');
+    return origSig();
+  };
+  let dismissCalls = 0;
+  (probe as UiProbe).dismissInterstitials = async (): Promise<void> => {
+    order.push('dismiss');
+    dismissCalls++;
+  };
+  await crawl(probe, opts(), () => {});
+  assert.ok(dismissCalls >= 1, 'dismissInterstitials was never called');
+  // the crawler clears interstitials before it ever reads a screen's signature
+  assert.equal(order[0], 'dismiss');
+  assert.ok(order.indexOf('dismiss') < order.indexOf('signature'));
+});

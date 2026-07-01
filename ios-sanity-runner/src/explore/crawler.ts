@@ -82,6 +82,10 @@ export interface UiProbe {
   reset(): Promise<void>;
   /** Capture a screenshot; return a path RELATIVE to the artifacts dir. */
   capture(name: string): Promise<string | undefined>;
+  /** Dismiss blocking interstitials (e.g. the dialect/culture popup or a native
+   *  permission alert) sitting over the screen, so the reads/taps that follow act
+   *  on the real content beneath. Optional — a no-op when unimplemented. */
+  dismissInterstitials?(): Promise<void>;
 }
 
 export interface CrawlOptions {
@@ -137,6 +141,9 @@ export async function crawl(
     // abandon this branch rather than crawl a half-dead app.
     const didReset = await withTimeout(probe.reset().then(() => true), RESET_TIMEOUT_MS, false);
     if (!didReset) return false;
+    // A warm reset lands on home, where the dialect popup can reappear — clear it
+    // before replaying taps so the path isn't blocked by the overlay.
+    if (probe.dismissInterstitials) await withTimeout(probe.dismissInterstitials(), OP_TIMEOUT_MS, undefined);
     for (const el of path) {
       if (aborted() || budgetHit()) return false;
       try {
@@ -151,6 +158,10 @@ export async function crawl(
   /** Explore the screen we are CURRENTLY on, whose tap-path from root is `path`. */
   async function exploreCurrent(path: UiElement[]): Promise<void> {
     if (aborted() || budgetHit()) return;
+
+    // Clear any blocking interstitial (e.g. the dialect popup) sitting over the
+    // screen so the signature/health/tap reads below act on the content beneath.
+    if (probe.dismissInterstitials) await withTimeout(probe.dismissInterstitials(), OP_TIMEOUT_MS, undefined);
 
     const sig = await withTimeout(probe.signature(), OP_TIMEOUT_MS, 'timeout-' + path.length);
     if (visited.has(sig)) return;
