@@ -15,6 +15,9 @@ const INTERACTIVE_TYPES = [
   'TextField', 'SecureTextField', 'SearchField', 'Image',
 ];
 const ERROR_MARKERS = ['something went wrong', 'went wrong', 'try again later', 'error occurred', 'unexpected error', 'no internet'];
+// STAGE is a Hindi app, so English-only markers would let a Hindi error/empty
+// screen pass as healthy. Matched against the raw (not lower-cased) source.
+const HINDI_ERROR_MARKERS = ['कुछ गलत हो गया', 'कुछ गड़बड़', 'फिर से कोशिश', 'पुनः प्रयास', 'दोबारा कोशिश', 'इंटरनेट कनेक्शन', 'नो इंटरनेट'];
 const MAX_ELEMENTS = 40;
 
 export class AppiumProbe implements UiProbe {
@@ -78,18 +81,34 @@ export class AppiumProbe implements UiProbe {
   }
 
   async health(): Promise<ScreenHealth> {
+    // A native system alert modally blocks the app — the surest "not actually on a
+    // content screen" signal, and the exact false-pass we hit (a permission popup
+    // counted as a healthy home, because its buttons live in SpringBoard, invisible
+    // to the app page source below). autoAcceptAlerts usually clears these first;
+    // this is the backstop for any alert it doesn't auto-handle.
+    try {
+      const btns = (await this.#driver.execute('mobile: alert', { action: 'getButtons' })) as unknown as string[];
+      if (Array.isArray(btns) && btns.length > 0) {
+        return { ok: false, problem: 'a native system alert is blocking the screen (' + btns.join(' / ') + ')' };
+      }
+    } catch {
+      /* no alert open — healthy so far */
+    }
     let src: string;
     try {
       src = await this.#driver.getPageSource();
     } catch (err) {
       return { ok: false, problem: 'app/session not responding: ' + (err instanceof Error ? err.message : String(err)) };
     }
-    const lc = src.toLowerCase();
-    const marker = ERROR_MARKERS.find((m) => lc.includes(m));
-    if (marker) return { ok: false, problem: 'error state on screen ("' + marker + '")' };
-    const elementCount = (src.match(/<XCUIElementType/g) ?? []).length;
-    if (elementCount < 3) return { ok: false, problem: 'screen appears blank (' + elementCount + ' elements)' };
-    return { ok: true };
+    // An immersive landscape screen (a media player) legitimately carries little
+    // labelled content, so the "no meaningful content" check is skipped for it.
+    let immersive = false;
+    try {
+      immersive = String((await this.#driver.getOrientation()) ?? '').toUpperCase().startsWith('LANDSCAPE');
+    } catch {
+      /* assume portrait */
+    }
+    return assessScreen(src, immersive);
   }
 
   async interactive(): Promise<UiElement[]> {
@@ -291,6 +310,31 @@ export class AppiumProbe implements UiProbe {
       return undefined;
     }
   }
+}
+
+/**
+ * Judge a page-source snapshot's health. Pure (no driver) so it is unit-tested
+ * directly, mirroring {@link parseInteractive}. The alert-present and
+ * orientation checks stay in {@link AppiumProbe.health} (they need the driver);
+ * this covers the source-derived signals that flag a false pass:
+ *   - an error state (English or Hindi markers), or
+ *   - an effectively blank screen (almost no elements), or
+ *   - a rendered-but-empty screen: raw node counts stay high on a stuck Flutter
+ *     tree, so also require a minimum of LABELLED nodes (real content/controls).
+ * `immersive` (a landscape player) skips the content check — such screens
+ * legitimately carry little labelled content.
+ */
+export function assessScreen(src: string, immersive = false): ScreenHealth {
+  const lc = src.toLowerCase();
+  const marker = ERROR_MARKERS.find((m) => lc.includes(m)) ?? HINDI_ERROR_MARKERS.find((m) => src.includes(m));
+  if (marker) return { ok: false, problem: 'error state on screen ("' + marker + '")' };
+  const elementCount = (src.match(/<XCUIElementType/g) ?? []).length;
+  if (elementCount < 3) return { ok: false, problem: 'screen appears blank (' + elementCount + ' elements)' };
+  if (!immersive) {
+    const labelled = (src.match(/\b(?:name|label)="[^"]+"/g) ?? []).length;
+    if (labelled < 2) return { ok: false, problem: 'screen shows no meaningful content (' + labelled + ' labelled elements)' };
+  }
+  return { ok: true };
 }
 
 /** djb2 — small, dependency-free, good enough for screen de-duplication. */

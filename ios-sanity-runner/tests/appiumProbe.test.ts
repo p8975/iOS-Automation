@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInteractive } from '../src/explore/appiumProbe.ts';
+import { parseInteractive, assessScreen } from '../src/explore/appiumProbe.ts';
 
 const XML = [
   '<?xml version="1.0" encoding="UTF-8"?>',
@@ -61,4 +61,52 @@ test('escapes single quotes in the predicate value', () => {
 
 test('honors the max cap', () => {
   assert.equal(parseInteractive(XML, undefined, 2).length, 2);
+});
+
+// A rich content screen: many elements, plenty labelled.
+const HEALTHY = [
+  '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="STAGE">',
+  '  <XCUIElementTypeButton name="Search" label="Search"/>',
+  '  <XCUIElementTypeImage name="फिल्में"/>',
+  '  <XCUIElementTypeImage name="शोज़"/>',
+  '  <XCUIElementTypeStaticText label="अपने पसंदीदा किरदार से बात करें"/>',
+  '</XCUIElementTypeApplication>',
+].join('\n');
+
+test('assessScreen: a rich content screen is healthy', () => {
+  assert.deepEqual(assessScreen(HEALTHY), { ok: true });
+});
+
+test('assessScreen: flags an English error state', () => {
+  const src = HEALTHY.replace('Search', 'Something went wrong');
+  const h = assessScreen(src);
+  assert.equal(h.ok, false);
+  assert.match(h.problem ?? '', /error state/);
+});
+
+test('assessScreen: flags a Hindi error state (English-only markers would miss it)', () => {
+  const src = HEALTHY + '\n<XCUIElementTypeStaticText label="कुछ गलत हो गया"/>';
+  const h = assessScreen(src);
+  assert.equal(h.ok, false);
+  assert.match(h.problem ?? '', /कुछ गलत हो गया/);
+});
+
+test('assessScreen: flags a blank screen (too few elements)', () => {
+  const h = assessScreen('<XCUIElementTypeApplication name="STAGE"/>');
+  assert.equal(h.ok, false);
+  assert.match(h.problem ?? '', /blank/);
+});
+
+test('assessScreen: flags a rendered-but-empty screen (nodes present, nothing labelled)', () => {
+  // A stuck Flutter tree keeps many wrapper nodes but no labelled content — the
+  // false-pass the raw element-count check alone would wave through.
+  const empty = Array.from({ length: 8 }, () => '<XCUIElementTypeOther/>').join('\n');
+  const h = assessScreen(empty);
+  assert.equal(h.ok, false);
+  assert.match(h.problem ?? '', /no meaningful content/);
+});
+
+test('assessScreen: an immersive (landscape) screen skips the content check', () => {
+  const empty = Array.from({ length: 8 }, () => '<XCUIElementTypeOther/>').join('\n');
+  assert.deepEqual(assessScreen(empty, true), { ok: true });
 });
